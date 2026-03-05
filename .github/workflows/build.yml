@@ -1,0 +1,63 @@
+name: Qt Multi-platform Build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+          - os: ubuntu-20.04 # 用于构建 CentOS 7 兼容版或 WASM
+            target: wasm
+          - os: ubuntu-20.04 
+            target: centos7
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. 安装 Qt 环境 (使用通用的 install-qt-action)
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '5.15.2' # CentOS 7 建议用 5.15，兼容性较好
+          target: 'desktop'
+          arch: ${{ matrix.target == 'windows' && 'win64_msvc2019_64' || 'gcc_64' }}
+
+      # 2. 针对 WASM 的特殊处理 (需要 Emscripten)
+      - name: Setup Emscripten (WASM only)
+        if: matrix.target == 'wasm'
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: '2.0.14' # 对应 Qt 5.15 的版本
+
+      # 3. 针对 CentOS 7 的特殊处理
+      # 注意：GitHub 官方没有 CentOS 7 镜像，通常在 Ubuntu 下通过静态链接或 Docker 编译
+      - name: Build in CentOS 7 Docker
+        if: matrix.target == 'centos7'
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/src -w /src centos:7 \
+          sh -c "yum install -y gcc-c++ make qt5-qtbase-devel && qmake-qt5 && make"
+
+      # 4. 标准编译步骤 (Windows & WASM)
+      - name: Build Project
+        if: matrix.target != 'centos7'
+        run: |
+          mkdir build
+          cd build
+          cmake ..
+          cmake --build .
+
+      # 5. 上传二进制产物
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hello-world-${{ matrix.target }}
+          path: |
+            build/release/
+            *.exe
+            *.wasm
